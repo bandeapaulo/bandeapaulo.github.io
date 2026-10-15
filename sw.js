@@ -1,7 +1,7 @@
 // Grilles de La Bande à Paulo : fonctionnement hors connexion.
 // Pages et grilles : réseau d'abord (pour recevoir les mises à jour), sinon copie locale.
 // Polices : copie locale d'abord.
-const CACHE = "grilles-paulo-v83";
+const CACHE = "grilles-paulo-v84";
 const CORE = ["./", "index.html", "songs.json", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "logo.png"];
 
 self.addEventListener("install", (e) => {
