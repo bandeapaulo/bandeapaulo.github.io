@@ -2288,20 +2288,28 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
     return p;
   }
   const PROP_TOPIC = () => NTFY_TOPIC + "-prop";
+  // Validation en un toucher : le bouton « ✓ Valider » de la notification envoie seulement « ok|clé » sur un canal ntfy,
+  // sans ouvrir de page. Un robot GitHub (.github/workflows/valider.yml) passe toutes les 5 minutes, applique les
+  // propositions validées à songs.json et prévient quand c’est en ligne.
+  const OK_TOPIC = () => NTFY_TOPIC + "-ok";
   async function proposalMsgs(base, payload) {
     // base : notification sans lien ; payload : contenu de la proposition. Rend la liste des messages à envoyer.
+    // Le contenu part toujours sur le canal annexe ; la notification ne porte qu’une clé (gardée 12 h par ntfy).
     const code = await pack(payload);
-    const link = location.origin + location.pathname + "#valider=" + code;
-    const size = (m) => new TextEncoder().encode(JSON.stringify(m)).length;
-    const acts = (u) => [{ action: "view", label: "✓ Valider", url: u + "&ok", clear: true }, { action: "view", label: "Voir", url: u, clear: true }];
-    let m = Object.assign({}, base, { click: link, actions: acts(link) });
-    if (size(m) <= FCM_MAX) return [m];
-    // Trop gros pour une notification : le contenu part sur un canal annexe, la notification ne porte qu’une clé.
     const key = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const parts = code.match(/.{1,3000}/g) || [code];
     const out = parts.map((c, i) => ({ topic: PROP_TOPIC(), message: `${key}|${i}|${parts.length}|${c}`, priority: 1 }));
     const short = location.origin + location.pathname + "#valider=@" + key;
-    out.push(Object.assign({}, base, { message: base.message.replace(/\n\nTouchez pour voir et valider\.$/, "") + "\n\nTouchez pour voir et valider (dans les 12 h).", click: short, actions: acts(short) }));
+    const okUrl = NTFY_URL + OK_TOPIC();
+    out.push(Object.assign({}, base, {
+      message: base.message.replace(/\n\nTouchez pour voir et valider\.$/, "") + "\n\n✓ Valider : en ligne pour tous en 5 à 15 min. (Touchez la notification pour voir le détail.)",
+      click: short,
+      actions: [
+        { action: "http", label: "✓ Valider", url: okUrl, method: "POST", body: "ok|" + key, clear: true },
+        { action: "http", label: "Refuser", url: okUrl, method: "POST", body: "no|" + key, clear: true },
+        { action: "view", label: "Voir", url: short, clear: true },
+      ],
+    }));
     return out;
   }
   async function resolveProposal(code) {
@@ -2347,6 +2355,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
     try { p = await unpack(await resolveProposal(code)); if (!p || !Array.isArray(p.songs)) throw 0; expandProposal(p); }
     catch (e) { app.innerHTML = `<div class="home"><p class="empty">${e && e.message === "expired" ? "Cette proposition n’est plus disponible (plus de 12 h) : demandez au musicien de la renvoyer depuis sa tablette." : "Ce lien de validation est abîmé ou incomplet."}</p><button class="btn" id="vback">← Retour à l’appli</button></div>`; document.getElementById("vback").onclick = () => { location.hash = ""; }; return; }
     LS.set("bap-admin", true);
+    const viaRobot = onGitHub() && !netToken();
     const items = p.songs.map((ns) => { const cur = songs().find((x) => x.id === ns.id); return { ns, cur, same: !!cur && canon(cur) === canon(ns) }; });
     const when = new Date(p.at || Date.now()).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
     app.innerHTML = `<div class="home valid">
@@ -2354,10 +2363,25 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
       ${items.map((it) => `<section class="vcard"><h2><span class="code">${esc(it.ns.code || "")}</span>${esc(it.ns.title)}</h2><p class="sub">${esc([it.ns.group, it.ns.folder].filter(Boolean).join(" › "))}</p>
         ${it.same ? `<p class="vok">✓ Déjà validée sur cette tablette.</p>` : `<ul>${describeChanges(it.cur, it.ns).slice(0, 30).map((c) => `<li>${esc(c)}</li>`).join("")}</ul>`}</section>`).join("")}
       <div class="vbtns"><button class="btn danger" id="vno">Refuser</button><button class="btn primary" id="vyes">✓ Valider</button></div>
-      <p class="help">${netToken() ? "Après validation, la modification est mise en ligne automatiquement pour toutes les tablettes." : "Après validation, la modification est sur votre téléphone. Pour qu’elle arrive sur toutes les tablettes, touchez « Mettre en ligne » en bas de l’écran. Vous pouvez valider plusieurs propositions avant de mettre en ligne."}</p>
+      <p class="help">${viaRobot ? "Après validation, la modification part en ligne toute seule pour toutes les tablettes (5 à 15 min)." : netToken() ? "Après validation, la modification est mise en ligne automatiquement pour toutes les tablettes." : "Après validation, la modification est sur votre téléphone. Pour qu’elle arrive sur toutes les tablettes, touchez « Mettre en ligne » en bas de l’écran. Vous pouvez valider plusieurs propositions avant de mettre en ligne."}</p>
     </div>`;
-    document.getElementById("vno").onclick = () => { history.replaceState(null, "", location.pathname); render(); toast("Proposition refusée."); };
-    const accept = () => {
+    document.getElementById("vno").onclick = () => { if (code[0] === "@") postNtfy({ topic: OK_TOPIC(), message: "no|" + code.slice(1) }).catch(() => {}); history.replaceState(null, "", location.pathname); render(); toast("Proposition refusée."); };
+    const accept = async () => {
+      if (viaRobot) {
+        try {
+          let key = code.slice(1);
+          if (code[0] !== "@") { // ancien lien : on dépose d’abord la proposition sur le canal annexe
+            key = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            const parts = code.match(/.{1,3000}/g) || [code];
+            for (let i = 0; i < parts.length; i++) await postNtfy({ topic: PROP_TOPIC(), message: `${key}|${i}|${parts.length}|${parts[i]}`, priority: 1 });
+          }
+          await postNtfy({ topic: OK_TOPIC(), message: "ok|" + key });
+        }
+        catch { toast("Pas de réseau : réessayez dans un moment.", 6000); return; }
+        history.replaceState(null, "", location.pathname); S.entered = true; render();
+        toast(`Validé ✓ (${items.map((it) => it.ns.code).join(", ")}). En ligne pour toutes les tablettes d’ici 5 à 15 min.`, 8000);
+        return;
+      }
       items.forEach((it) => { const i = songs().findIndex((x) => x.id === it.ns.id); if (i >= 0) songs()[i] = clone(it.ns); else songs().push(clone(it.ns)); });
       LS.set("bap-local", { base: S.serverText, data: S.data }); S.localOnly = true; S.dirty = false;
       history.replaceState(null, "", location.pathname); S.entered = true; render();

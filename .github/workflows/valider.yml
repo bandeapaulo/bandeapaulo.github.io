@@ -1,0 +1,43 @@
+# Validation en un toucher : toutes les 5 minutes, applique les modifications validées
+# depuis le bouton « ✓ Valider » des notifications ntfy, puis met le site à jour.
+name: Validations ntfy
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: validations
+  cancel-in-progress: false
+jobs:
+  valider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Appliquer les validations
+        id: v
+        env:
+          BAP_MOT_DE_PASSE: ${{ secrets.BAP_MOT_DE_PASSE }}
+        run: node .github/scripts/valider.mjs
+      - name: Mettre en ligne
+        run: |
+          git diff --quiet && exit 0
+          git config user.name "Robot Bande à Paulo"
+          git config user.email "bandeapaulo@users.noreply.github.com"
+          git add songs.json .github/valider-fait.json
+          git commit -q -m "Validation depuis ntfy ($(TZ=Europe/Paris date '+%d/%m/%Y %H:%M'))"
+          git push -q
+      - name: Reconstruire le site
+        if: steps.v.outputs.applied != '0' && steps.v.outputs.applied != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null || true
+      - name: Prévenir
+        if: steps.v.outputs.applied != '0' && steps.v.outputs.applied != ''
+        run: sleep 60 && node .github/scripts/valider.mjs annoncer
