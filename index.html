@@ -2293,16 +2293,15 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
     const code = await pack(payload);
     const link = location.origin + location.pathname + "#valider=" + code;
     const size = (m) => new TextEncoder().encode(JSON.stringify(m)).length;
-    let m = Object.assign({}, base, { click: link, actions: [{ action: "view", label: "Voir et valider", url: link, clear: true }] });
-    if (size(m) <= FCM_MAX) return [m];
-    m = Object.assign({}, base, { click: link });
+    const acts = (u) => [{ action: "view", label: "✓ Valider", url: u + "&ok", clear: true }, { action: "view", label: "Voir", url: u, clear: true }];
+    let m = Object.assign({}, base, { click: link, actions: acts(link) });
     if (size(m) <= FCM_MAX) return [m];
     // Trop gros pour une notification : le contenu part sur un canal annexe, la notification ne porte qu’une clé.
     const key = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const parts = code.match(/.{1,3000}/g) || [code];
     const out = parts.map((c, i) => ({ topic: PROP_TOPIC(), message: `${key}|${i}|${parts.length}|${c}`, priority: 1 }));
     const short = location.origin + location.pathname + "#valider=@" + key;
-    out.push(Object.assign({}, base, { message: base.message.replace(/\n\nTouchez pour voir et valider\.$/, "") + "\n\nTouchez pour voir et valider (dans les 12 h).", click: short, actions: [{ action: "view", label: "Voir et valider", url: short, clear: true }] }));
+    out.push(Object.assign({}, base, { message: base.message.replace(/\n\nTouchez pour voir et valider\.$/, "") + "\n\nTouchez pour voir et valider (dans les 12 h).", click: short, actions: acts(short) }));
     return out;
   }
   async function resolveProposal(code) {
@@ -2340,6 +2339,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
     S.dirty = false;
   }
   async function renderValidation(code) {
+    const direct = /&ok$/.test(code); code = code.replace(/&ok$/, "");
     releaseWake();
     document.querySelector(".savebar")?.remove(); app.style.paddingBottom = "";
     app.innerHTML = '<p class="empty">Ouverture de la proposition…</p>';
@@ -2357,13 +2357,16 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
       <p class="help">${netToken() ? "Après validation, la modification est mise en ligne automatiquement pour toutes les tablettes." : "Après validation, la modification est sur votre téléphone. Pour qu’elle arrive sur toutes les tablettes, touchez « Mettre en ligne » en bas de l’écran. Vous pouvez valider plusieurs propositions avant de mettre en ligne."}</p>
     </div>`;
     document.getElementById("vno").onclick = () => { history.replaceState(null, "", location.pathname); render(); toast("Proposition refusée."); };
-    document.getElementById("vyes").onclick = () => {
+    const accept = () => {
       items.forEach((it) => { const i = songs().findIndex((x) => x.id === it.ns.id); if (i >= 0) songs()[i] = clone(it.ns); else songs().push(clone(it.ns)); });
       LS.set("bap-local", { base: S.serverText, data: S.data }); S.localOnly = true; S.dirty = false;
       history.replaceState(null, "", location.pathname); S.entered = true; render();
       if (netToken()) publishZip();
+      else if (onGitHub()) openGitHubKey(publishZip);
       else toast(`Validé ✓ (${items.map((it) => it.ns.code).join(", ")}). Touchez « Mettre en ligne » quand vous êtes prêt.`, 6000);
     };
+    document.getElementById("vyes").onclick = accept;
+    if (direct) { if (items.every((it) => it.same)) toast("Déjà validée sur cet appareil.", 5000); else accept(); }
   }
   // ---------- mise en ligne : fichier zip prêt pour Netlify ----------
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -2460,7 +2463,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
   }
   async function publishGitHub(data, plain) {
     const gh = ghRepo(), tok = netToken();
-    if (!tok) { downloadSongs(data); toast("Pas de clé GitHub sur cet appareil : songs.json est téléchargé. Ajoutez la clé dans l’Espace responsable pour publier automatiquement.", 9000); return; }
+    if (!tok) { openGitHubKey(publishZip); toast("Cet appareil n’a pas encore la clé GitHub : collez-la une fois, la mise en ligne part aussitôt.", 9000); return; }
     publishing = true;
     const url = `${GH_API}repos/${gh.owner}/${gh.repo}/contents/songs.json`;
     const H = { Authorization: "Bearer " + tok, Accept: "application/vnd.github+json" };
@@ -2574,7 +2577,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
     wrap.querySelector("#tdel")?.addEventListener("click", () => { LS.del("bap-ntoken"); toast("Clé retirée."); close(); });
     wrap.querySelector("#ntForm").addEventListener("submit", (e) => { e.preventDefault(); const v = wrap.querySelector("#f-tok").value.trim(); if (v) { LS.set("bap-ntoken", v); toast("Clé enregistrée ✓ Les validations seront mises en ligne automatiquement."); } close(); });
   }
-  function openGitHubKey() {
+  function openGitHubKey(after) {
     const gh = ghRepo();
     const wrap = document.createElement("div");
     wrap.className = "sheet-wrap";
@@ -2608,6 +2611,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
         if (j.permissions && !j.permissions.push) { toast("Cette clé peut lire mais pas écrire : revoyez l’étape 4 (Contents : Read and write).", 9000); return; }
       } catch { toast("Impossible de vérifier la clé (pas de réseau ?). Elle est enregistrée quand même.", 6000); }
       LS.set("bap-ghtoken", v); toast("Clé enregistrée ✓ Les validations seront mises en ligne automatiquement.", 6000); close();
+      if (typeof after === "function") after();
     });
   }
   // Les tablettes vérifient régulièrement s’il y a une nouvelle version en ligne.
