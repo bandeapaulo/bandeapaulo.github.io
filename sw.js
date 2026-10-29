@@ -3,8 +3,8 @@
 //   en 3,5 s (salle sans réseau, wifi capricieux), on sert tout de suite la copie enregistrée.
 // • Icônes, logo, polices : copie enregistrée d'abord.
 // • La vidéo de présentation n'est pas gardée (trop lourde) : elle demande internet.
-const CACHE = "grilles-paulo-v102";
-const CORE = ["./", "index.html", "songs.json", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "logo.png", "guide.jpg"];
+const CACHE = "grilles-paulo-v103";
+const CORE = ["./", "index.html", "songs.json", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "logo.png", "guide.jpg", "musejazz.woff"];
 const WAIT = 3500;
 
 self.addEventListener("install", (e) => {
