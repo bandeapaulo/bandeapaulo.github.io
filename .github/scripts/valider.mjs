@@ -12,10 +12,20 @@ const STATE = ".github/valider-fait.json";
 const RESUME = (process.env.RUNNER_TEMP || "/tmp") + "/valider-resume.txt";
 const PW = process.env.BAP_MOT_DE_PASSE || "";
 
+// ntfy.sh peut refuser ponctuellement (surcharge, trop de requêtes depuis les serveurs GitHub) :
+// on réessaie plusieurs fois ; si ça ne passe toujours pas, on abandonne sans erreur, le passage suivant (5 min) rattrapera.
+class Reseau extends Error {}
 const poll = async (topic) => {
-  const r = await fetch(`${NTFY}${topic}/json?poll=1&since=12h`);
-  if (!r.ok) throw new Error(`ntfy ${topic} : ${r.status}`);
-  return (await r.text()).split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((m) => m && m.event === "message");
+  let last = "";
+  for (let i = 0; i < 4; i++) {
+    try {
+      const r = await fetch(`${NTFY}${topic}/json?poll=1&since=12h`);
+      if (r.ok) return (await r.text()).split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((m) => m && m.event === "message");
+      last = String(r.status);
+    } catch (e) { last = e.message; }
+    await new Promise((res) => setTimeout(res, 4000 * (i + 1)));
+  }
+  throw new Reseau(`ntfy ${topic} injoignable (${last})`);
 };
 const notify = (msg) => fetch(NTFY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ topic: TOPIC }, msg)) }).catch(() => {});
 
@@ -115,4 +125,10 @@ if (process.argv[2] === "annoncer") {
   const resume = existsSync(RESUME) ? readFileSync(RESUME, "utf8").trim() : "";
   await fetch(NTFY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic: UPD_TOPIC, message: "maj", priority: 1 }) }).catch(() => {});
   await notify({ title: "✓ En ligne pour toutes les tablettes", message: resume || "Modification validée.", tags: ["white_check_mark"], priority: 2 });
-} else await main();
+} else {
+  try { await main(); }
+  catch (e) {
+    if (e instanceof Reseau) { console.log(`⚠ ${e.message} : on réessaiera au prochain passage.`); writeFileSync(process.env.GITHUB_OUTPUT || "/dev/null", "applied=0\n", { flag: "a" }); }
+    else throw e;
+  }
+}
