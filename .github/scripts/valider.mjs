@@ -99,7 +99,8 @@ async function main() {
         ns = Object.assign(JSON.parse(JSON.stringify(data.songs[i])), x._p);
         (x._d || []).forEach((f) => delete ns[f]);
       } else ns = x;
-      if (i >= 0) { if (canon(data.songs[i]) === canon(ns)) continue; data.songs[i] = ns; } else data.songs.push(ns);
+      ns.maj = { by: p.by || "?", at: new Date().toISOString().slice(0, 10) }; // modifié depuis l'appli : à ne plus retoucher en lot
+      if (i >= 0) { const o = Object.assign({}, data.songs[i]), n2 = Object.assign({}, ns); delete o.maj; delete n2.maj; if (canon(o) === canon(n2)) continue; data.songs[i] = ns; } else data.songs.push(ns);
       applied.push(`${ns.code || ""} ${ns.title || ""}`.trim() + (p.by ? ` (${p.by})` : ""));
     }
   }
